@@ -16,3 +16,4 @@ poc/collect/raw/
 poc/collect/meta.json
 __pycache__/
 *.pyc
+poc/classify/extra_tests.json
