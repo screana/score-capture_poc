@@ -1,0 +1,18 @@
+# 写真・集めた画像・中間生成物はリポジトリに入れない（公開リポジトリのため）
+poc/ocr/imgs/
+poc/ocr/test_imgs/
+poc/ocr/warped/
+poc/ocr/test_warped/
+poc/ocr/crops/
+poc/ocr/tw/
+poc/ocr/*.jpg
+poc/ocr/*.png
+poc/ocr/boxes.json
+poc/ocr/test_boxes.json
+poc/ocr/result.json
+poc/ocr/test_result.json
+poc/ocr/gt.json
+poc/collect/raw/
+poc/collect/meta.json
+__pycache__/
+*.pyc
