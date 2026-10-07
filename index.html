@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>採点画面キャプチャ</title>
+<style>
+/* Layout: full-bleed camera viewfinder; status + three gauges on top, controls and the shot tray at the bottom.
+   Single dark look on purpose (it's a viewfinder used in dim karaoke rooms). */
+:root {
+  --bg: #0b0f17;          /* room-dark ground */
+  --panel: #141a26;       /* bars over the viewfinder */
+  --line: #283246;
+  --fg: #e8edf6;
+  --muted: #8d98ad;
+  --ok: #4fd18b;          /* condition met */
+  --wait: #f2c14e;        /* almost */
+  --bad: #ff6b6b;         /* not met */
+  --accent: #6aa8ff;      /* buttons / quad outline while searching */
+  --font-ui: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", system-ui, sans-serif;
+  --font-num: ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 var(--font-ui);
+  display: flex; flex-direction: column; overflow: hidden;
+  -webkit-user-select: none; user-select: none;
+}
+button, input, select { font: inherit; color: inherit; }
+button {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 10px;
+  padding: 10px 14px; cursor: pointer; touch-action: manipulation;
+}
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 700; }
+button:disabled { opacity: .45; cursor: default; }
+
+/* top bar */
+.top {
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 8px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  display: grid; gap: 8px;
+}
+.status { display: flex; align-items: center; gap: 10px; min-height: 28px; }
+.pill {
+  font-weight: 700; padding: 3px 10px; border-radius: 999px; font-size: 13px; letter-spacing: .02em;
+  background: var(--line); color: var(--fg); white-space: nowrap;
+}
+.pill[data-s="ok"] { background: var(--ok); color: #06210f; }
+.pill[data-s="wait"] { background: var(--wait); color: #2a1e00; }
+.pill[data-s="bad"] { background: var(--bad); color: #2b0606; }
+.hint { color: var(--muted); font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gauges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.gauge { display: grid; gap: 3px; min-width: 0; }
+.gauge .lab { display: flex; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+.gauge .val { font-family: var(--font-num); font-variant-numeric: tabular-nums; color: var(--fg); }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0%; background: var(--bad); transition: width .12s linear; }
+.bar i[data-s="ok"] { background: var(--ok); }
+.bar i[data-s="wait"] { background: var(--wait); }
+
+/* viewfinder */
+.view { position: relative; flex: 1; min-height: 0; background: #000; }
+.view video, .view canvas.ov, .view img.still {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain;
+}
+.view canvas.ov { pointer-events: none; }
+.flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity .25s; }
+.flash.on { opacity: .7; transition: none; }
+.empty {
+  position: absolute; inset: 0; display: grid; place-content: center; gap: 14px;
+  text-align: center; padding: 24px; color: var(--muted);
+}
+.empty h1 { margin: 0; font-size: 20px; color: var(--fg); text-wrap: balance; }
+.empty p { margin: 0; max-width: 34ch; justify-self: center; }
+.empty .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.frame-guide {
+  position: absolute; left: 6%; right: 6%; top: 50%; aspect-ratio: 16 / 9; transform: translateY(-50%);
+  max-height: 86%; margin: auto; border: 1.5px dashed rgba(255,255,255,.28); border-radius: 6px; pointer-events: none;
+}
+
+/* bottom */
+.bottom {
+  background: var(--panel); border-top: 1px solid var(--line);
+  padding: 10px 16px calc(env(safe-area-inset-bottom, 0px) + 10px);
+  display: grid; gap: 10px;
+}
+.controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.controls .grow { flex: 1; }
+.toggle { display: inline-flex; align-items: center; gap: 8px; padding: 6px 4px; color: var(--muted); }
+.toggle input { width: 18px; height: 18px; accent-color: var(--ok); }
+.tray { display: flex; gap: 8px; overflow-x: auto; min-height: 0; padding-bottom: 2px; }
+.tray:empty::before { content: "撮れた画面がここに並びます"; color: var(--muted); font-size: 12px; padding: 6px 0; }
+.shot {
+  flex: 0 0 auto; width: 120px; padding: 0; overflow: hidden; border-radius: 8px; position: relative; background: #000;
+}
+.shot img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; }
+.shot span {
+  position: absolute; left: 4px; bottom: 4px; font: 11px var(--font-num); background: rgba(0,0,0,.65);
+  padding: 1px 5px; border-radius: 4px;
+}
+.sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px 14px; }
+.sliders label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+.sliders label b { font: 12px var(--font-num); color: var(--fg); font-weight: 400; }
+.sliders input[type=range] { width: 100%; accent-color: var(--accent); }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+details[open] summary { margin-bottom: 8px; }
+
+/* detail sheet */
+.sheet {
+  position: fixed; inset: 0; background: var(--bg); z-index: 10;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px calc(env(safe-area-inset-bottom, 0px) + 12px);
+  overflow-y: auto;
+}
+.sheet img { width: 100%; max-width: 100%; border-radius: 8px; background: #000; }
+.sheet .meta { font: 12px/1.6 var(--font-num); color: var(--muted); word-break: break-all; }
+.sheet .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.sheet h2 { margin: 0; font-size: 15px; }
+.sheet .cap { font-size: 12px; color: var(--muted); margin: 0 0 4px; }
+@media (prefers-reduced-motion: reduce) { .bar i, .flash { transition: none; } }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="status">
+    <span class="pill" id="pill" data-s="">停止中</span>
+    <span class="hint" id="hint">「カメラを起動」を押して、採点画面に向けてください</span>
+  </div>
+  <div class="gauges">
+    <div class="gauge">
+      <div class="lab"><span>画面の検出</span><span class="val" id="vDet">—</span></div>
+      <div class="bar"><i id="gDet"></i></div>
+    </div>
+    <div class="gauge">
+      <div class="lab"><span>くっきり度</span><span class="val" id="vSharp">—</span></div>
+      <div class="bar"><i id="gSharp"></i></div>
+    </div>
+    <div class="gauge">
+      <div class="lab"><span>手の揺れ</span><span class="val" id="vShake">—</span></div>
+      <div class="bar"><i id="gShake"></i></div>
+    </div>
+  </div>
+</header>
+
+<main class="view" id="view">
+  <video id="video" playsinline muted autoplay></video>
+  <img class="still" id="still" alt="読み込んだ写真" hidden>
+  <canvas class="ov" id="ov"></canvas>
+  <div class="frame-guide" id="guide" hidden></div>
+  <div class="flash" id="flash"></div>
+  <div class="empty" id="empty">
+    <h1>採点画面を自動で撮影します</h1>
+    <p>画面の四隅が見つかり、ブレと手の揺れが収まった瞬間に連写して、一番くっきりした1枚を正面向きに補正して残します。</p>
+    <div class="row">
+      <button class="primary" id="btnStart">カメラを起動</button>
+      <button id="btnFile">写真で試す</button>
+    </div>
+    <input type="file" id="file" accept="image/*" hidden>
+  </div>
+</main>
+
+<footer class="bottom">
+  <div class="controls">
+    <label class="toggle"><input type="checkbox" id="auto" checked> 自動で撮る</label>
+    <span class="grow"></span>
+    <button id="btnShoot" disabled>今すぐ撮る</button>
+    <button id="btnResume" hidden>次を撮る</button>
+  </div>
+  <div class="tray" id="tray"></div>
+  <details id="settings">
+    <summary>調整</summary>
+    <div class="sliders">
+      <label>くっきり度の下限 <b id="oFloor"></b><input type="range" id="sFloor" min="0" max="3000" step="50"></label>
+      <label>直近最大との比 <b id="oRel"></b><input type="range" id="sRel" min="0.5" max="1" step="0.01"></label>
+      <label>揺れの上限 (°/秒) <b id="oShake"></b><input type="range" id="sShake" min="2" max="60" step="1"></label>
+      <label>静止の判定時間 (ms) <b id="oHold"></b><input type="range" id="sHold" min="0" max="1500" step="50"></label>
+      <label>連写枚数 <b id="oBurst"></b><input type="range" id="sBurst" min="1" max="10" step="1"></label>
+      <label id="lZoom" hidden>ズーム <b id="oZoom"></b><input type="range" id="sZoom"></label>
+      <label id="lExp" hidden>露出補正 <b id="oExp"></b><input type="range" id="sExp"></label>
+    </div>
+    <p class="hint" id="camInfo" style="white-space:normal"></p>
+  </details>
+</footer>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="row" style="justify-content:space-between;align-items:center">
+    <h2 id="shTitle">撮影結果</h2>
+    <button id="shClose">閉じる</button>
+  </div>
+  <div>
+    <p class="cap">正面向きに補正した画像（1600×900）</p>
+    <img id="shWarp" alt="補正後の採点画面">
+  </div>
+  <div class="row">
+    <button class="primary" id="shSaveWarp">補正後を保存</button>
+    <button id="shSaveRaw">元の画像を保存</button>
+    <button id="shShare" hidden>共有…</button>
+    <button id="shDelete">削除</button>
+  </div>
+  <div>
+    <p class="cap">元の画像（検出した四隅つき）</p>
+    <img id="shRaw" alt="撮影した元の画像">
+  </div>
+  <div class="meta" id="shMeta"></div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   settings
+   ============================================================ */
+const DEF = { floor: 300, rel: 0.85, shake: 20, hold: 400, burst: 5 };
+const S = Object.assign({}, DEF);
+try { Object.assign(S, JSON.parse(localStorage.getItem("ksc-settings") || "{}")); } catch (e) {}
+function saveSettings() { try { localStorage.setItem("ksc-settings", JSON.stringify(S)); } catch (e) {} }
+function bindSlider(id, key, out, fmt) {
+  const el = document.getElementById(id), o = document.getElementById(out);
+  el.value = S[key]; o.textContent = fmt(S[key]);
+  el.addEventListener("input", () => { S[key] = +el.value; o.textContent = fmt(S[key]); saveSettings(); });
+}
+bindSlider("sFloor", "floor", "oFloor", v => v.toFixed(0));
+bindSlider("sRel", "rel", "oRel", v => Math.round(v * 100) + "%");
+bindSlider("sShake", "shake", "oShake", v => v.toFixed(0));
+bindSlider("sHold", "hold", "oHold", v => v.toFixed(0));
+bindSlider("sBurst", "burst", "oBurst", v => v.toFixed(0));
+
+const $ = id => document.getElementById(id);
+const video = $("video"), ov = $("ov"), octx = ov.getContext("2d");
+
+/* ============================================================
+   image analysis (pure functions on RGBA ImageData-like buffers)
+   ============================================================ */
+
+/** grayscale + value (max channel) planes */
+function planes(data, w, h) {
+  const n = w * h, gray = new Float32Array(n), val = new Uint8Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    const r = data[j], g = data[j + 1], b = data[j + 2];
+    gray[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+    val[i] = r > g ? (r > b ? r : b) : (g > b ? g : b);
+  }
+  return { gray, val };
+}
+
+/** variance of the 4-neighbour Laplacian inside a rectangle (sharpness) */
+function lapVar(gray, w, h, x0, y0, x1, y1) {
+  x0 = Math.max(1, x0 | 0); y0 = Math.max(1, y0 | 0);
+  x1 = Math.min(w - 2, x1 | 0); y1 = Math.min(h - 2, y1 | 0);
+  let s = 0, s2 = 0, n = 0;
+  for (let y = y0; y <= y1; y++) {
+    let i = y * w + x0;
+    for (let x = x0; x <= x1; x++, i++) {
+      const l = 4 * gray[i] - gray[i - 1] - gray[i + 1] - gray[i - w] - gray[i + w];
+      s += l; s2 += l * l; n++;
+    }
+  }
+  if (n < 50) return 0;
+  const m = s / n;
+  return s2 / n - m * m;
+}
+
+function erode(src, w, h) {
+  const out = new Uint8Array(w * h);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x;
+    out[i] = src[i] & src[i - 1] & src[i + 1] & src[i - w] & src[i + w];
+  }
+  return out;
+}
+function dilate(src, w, h) {
+  const out = new Uint8Array(w * h);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x;
+    out[i] = src[i] | src[i - 1] | src[i + 1] | src[i - w] | src[i + w];
+  }
+  return out;
+}
+
+function cross(o, a, b) { return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]); }
+function hull(pts) {  // monotone chain
+  pts = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (pts.length < 3) return pts;
+  const lo = [], up = [];
+  for (const p of pts) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+  up.pop(); lo.pop();
+  return lo.concat(up);
+}
+function polyArea(q) { let a = 0; for (let i = 0; i < q.length; i++) { const p = q[i], r = q[(i + 1) % q.length]; a += p[0] * r[1] - r[0] * p[1]; } return Math.abs(a) / 2; }
+
+/** biggest-area quadrilateral approximation of a convex hull (rotation invariant) */
+function quadFromHull(H) {
+  if (H.length < 4) return null;
+  let bi = 0, bj = 0, bd = -1;
+  for (let i = 0; i < H.length; i++) for (let j = i + 1; j < H.length; j++) {
+    const dx = H[i][0] - H[j][0], dy = H[i][1] - H[j][1], d = dx * dx + dy * dy;
+    if (d > bd) { bd = d; bi = i; bj = j; }
+  }
+  const a = H[bi], b = H[bj];
+  let pmax = null, pmin = null, vmax = 0, vmin = 0;
+  for (const p of H) { const v = cross(a, b, p); if (v > vmax) { vmax = v; pmax = p; } if (v < vmin) { vmin = v; pmin = p; } }
+  if (!pmax || !pmin) return null;
+  return orderQuad([a, pmax, b, pmin]);
+}
+/** order as top-left, top-right, bottom-right, bottom-left */
+function orderQuad(q) {
+  const s = q.map(p => p[0] + p[1]), d = q.map(p => p[0] - p[1]);
+  const tl = q[s.indexOf(Math.min(...s))], br = q[s.indexOf(Math.max(...s))];
+  const tr = q[d.indexOf(Math.max(...d))], bl = q[d.indexOf(Math.min(...d))];
+  const out = [tl, tr, br, bl];
+  return new Set(out).size === 4 ? out : null;
+}
+
+/**
+ * Find the TV screen: a bright region fenced in by the dark bezel.
+ * For several brightness thresholds, label bright connected regions, fill their holes
+ * (row spans), fit a quadrilateral and keep the one that is big and most quad-like.
+ * Returns corners in pixel coords of the given buffer, plus diagnostics.
+ */
+function detectScreen(val, w, h) {
+  const N = w * h;
+  let best = null;
+  for (const thr of [40, 60, 80, 100]) {
+    let m = new Uint8Array(N);
+    for (let i = 0; i < N; i++) m[i] = val[i] > thr ? 1 : 0;
+    m = dilate(erode(m, w, h), w, h);           // cut 1-px bridges through the bezel
+    const lab = new Int32Array(N); let next = 0;
+    const stack = new Int32Array(N);
+    for (let s0 = 0; s0 < N; s0++) {
+      if (!m[s0] || lab[s0]) continue;
+      next++;
+      let sp = 0; stack[sp++] = s0; lab[s0] = next;
+      let area = 0;
+      const rmin = new Int32Array(h).fill(w), rmax = new Int32Array(h).fill(-1);
+      let ymin = h, ymax = -1;
+      while (sp) {
+        const i = stack[--sp], y = (i / w) | 0, x = i - y * w;
+        area++;
+        if (x < rmin[y]) rmin[y] = x; if (x > rmax[y]) rmax[y] = x;
+        if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+        if (x > 0 && m[i - 1] && !lab[i - 1]) { lab[i - 1] = next; stack[sp++] = i - 1; }
+        if (x < w - 1 && m[i + 1] && !lab[i + 1]) { lab[i + 1] = next; stack[sp++] = i + 1; }
+        if (y > 0 && m[i - w] && !lab[i - w]) { lab[i - w] = next; stack[sp++] = i - w; }
+        if (y < h - 1 && m[i + w] && !lab[i + w]) { lab[i + w] = next; stack[sp++] = i + w; }
+      }
+      if (area < 0.06 * N) continue;
+      let filled = 0; const pts = [];
+      for (let y = ymin; y <= ymax; y++) if (rmax[y] >= 0) { filled += rmax[y] - rmin[y] + 1; pts.push([rmin[y], y], [rmax[y] + 1, y]); }
+      const q = quadFromHull(hull(pts));
+      if (!q) continue;
+      const qa = polyArea(q); if (qa <= 0) continue;
+      const fa = filled / N, rect = Math.min(filled, qa) / Math.max(filled, qa);
+      const wd = (Math.hypot(q[1][0] - q[0][0], q[1][1] - q[0][1]) + Math.hypot(q[2][0] - q[3][0], q[2][1] - q[3][1])) / 2;
+      const ht = (Math.hypot(q[3][0] - q[0][0], q[3][1] - q[0][1]) + Math.hypot(q[2][0] - q[1][0], q[2][1] - q[1][1])) / 2;
+      const ar = wd / Math.max(ht, 1);
+      const mg = 2, xs = q.map(p => p[0]), ys = q.map(p => p[1]);
+      const touch = (Math.min(...xs) < mg) + (Math.min(...ys) < mg) + (Math.max(...xs) > w - 1 - mg) + (Math.max(...ys) > h - 1 - mg);
+      if (ar < 1.1 || ar > 3.2 || fa > 0.85 || touch >= 3 || rect < 0.85) continue;
+      const score = rect ** 4 * Math.sqrt(fa);
+      if (!best || score > best.score) best = { quad: q, score, rect, area: fa, thr };
+    }
+  }
+  return best;
+}
+
+/** homography mapping dst rectangle (W x H) -> src quad (tl,tr,br,bl) */
+function homography(quad, W, H) {
+  const dst = [[0, 0], [W, 0], [W, H], [0, H]], A = [], bv = [];
+  for (let k = 0; k < 4; k++) {
+    const [x, y] = dst[k], [u, v] = quad[k];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); bv.push(u);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); bv.push(v);
+  }
+  // gaussian elimination
+  for (let c = 0; c < 8; c++) {
+    let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]]; [bv[c], bv[p]] = [bv[p], bv[c]];
+    for (let r = 0; r < 8; r++) if (r !== c) {
+      const f = A[r][c] / A[c][c];
+      for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k];
+      bv[r] -= f * bv[c];
+    }
+  }
+  return bv.map((v, i) => v / A[i][i]).concat([1]);
+}
+
+/** perspective-warp the quad of a source canvas into a W x H canvas (bilinear) */
+function warpCanvas(srcCanvas, quad, W, H) {
+  const sw = srcCanvas.width, sh = srcCanvas.height;
+  const src = srcCanvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, sw, sh).data;
+  const out = document.createElement("canvas"); out.width = W; out.height = H;
+  const octx2 = out.getContext("2d"), img = octx2.createImageData(W, H), d = img.data;
+  const h = homography(quad, W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const z = h[6] * x + h[7] * y + 1;
+      const u = (h[0] * x + h[1] * y + h[2]) / z, v = (h[3] * x + h[4] * y + h[5]) / z;
+      const o = (y * W + x) * 4;
+      if (u < 0 || v < 0 || u >= sw - 1 || v >= sh - 1) { d[o + 3] = 255; continue; }
+      const x0 = u | 0, y0 = v | 0, fx = u - x0, fy = v - y0;
+      const i00 = (y0 * sw + x0) * 4, i10 = i00 + 4, i01 = i00 + sw * 4, i11 = i01 + 4;
+      for (let c = 0; c < 3; c++) {
+        d[o + c] = (src[i00 + c] * (1 - fx) + src[i10 + c] * fx) * (1 - fy) + (src[i01 + c] * (1 - fx) + src[i11 + c] * fx) * fy;
+      }
+      d[o + 3] = 255;
+    }
+  }
+  octx2.putImageData(img, 0, 0);
+  return out;
+}
+
+/* analyse one frame drawn into a small canvas: screen quad + sharpness inside it */
+const ana = document.createElement("canvas");
+const actx = ana.getContext("2d", { willReadFrequently: true });
+const AW = 640;
+function analyse(source, sw, sh) {
+  const aw = AW, ah = Math.round(sh * AW / sw);
+  ana.width = aw; ana.height = ah;
+  actx.drawImage(source, 0, 0, aw, ah);
+  const data = actx.getImageData(0, 0, aw, ah).data;
+  const { gray, val } = planes(data, aw, ah);
+  // detection on a half-size copy of the value plane (cheap)
+  const dw = aw >> 1, dh = ah >> 1, dval = new Uint8Array(dw * dh);
+  for (let y = 0; y < dh; y++) for (let x = 0; x < dw; x++) dval[y * dw + x] = val[(2 * y) * aw + 2 * x];
+  const det = detectScreen(dval, dw, dh);
+  let sharp = 0, quadN = null;
+  if (det) {
+    quadN = det.quad.map(p => [p[0] / dw, p[1] / dh]);       // normalised 0..1
+    const xs = quadN.map(p => p[0] * aw), ys = quadN.map(p => p[1] * ah);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const mx = (x1 - x0) * 0.12, my = (y1 - y0) * 0.12;
+    sharp = lapVar(gray, aw, ah, x0 + mx, y0 + my, x1 - mx, y1 - my);
+  } else {
+    sharp = lapVar(gray, aw, ah, aw * 0.2, ah * 0.2, aw * 0.8, ah * 0.8);
+  }
+  return { det, quadN, sharp };
+}
+
+/* ============================================================
+   live state
+   ============================================================ */
+let stream = null, track = null, running = false, paused = false, busy = false;
+const hist = [];               // {t, sharp, quadN}
+let shake = null;              // deg/s, null = no sensor
+let goodSince = 0;
+const shots = [];
+
+window.addEventListener("devicemotion", e => {
+  const r = e.rotationRate;
+  if (r && (r.alpha != null || r.beta != null || r.gamma != null)) {
+    const v = Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0);
+    shake = shake == null ? v : shake * 0.7 + v * 0.3;
+  }
+});
+
+function setGauge(id, frac, state, text, vid) {
+  const g = $(id); g.style.width = Math.max(0, Math.min(1, frac)) * 100 + "%"; g.dataset.s = state;
+  $(vid).textContent = text;
+}
+function setStatus(state, pill, hint) { const p = $("pill"); p.dataset.s = state; p.textContent = pill; $("hint").textContent = hint; }
+
+function quadMotion() {
+  // mean corner displacement between consecutive frames over the last ~5 frames (fraction of width)
+  const qs = hist.slice(-6).map(h => h.quadN);
+  if (qs.length < 4 || qs.some(q => !q)) return Infinity;
+  let s = 0, n = 0;
+  for (let k = 1; k < qs.length; k++) for (let c = 0; c < 4; c++) { s += Math.hypot(qs[k][c][0] - qs[k - 1][c][0], qs[k][c][1] - qs[k - 1][c][1]); n++; }
+  return s / n;
+}
+
+function drawOverlay(quadN, color, sw, sh) {
+  const r = ov.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  if (ov.width !== Math.round(r.width * dpr) || ov.height !== Math.round(r.height * dpr)) { ov.width = Math.round(r.width * dpr); ov.height = Math.round(r.height * dpr); }
+  octx.clearRect(0, 0, ov.width, ov.height);
+  if (!quadN || !sw) return;
+  // object-fit: contain mapping
+  const sc = Math.min(ov.width / sw, ov.height / sh), ox = (ov.width - sw * sc) / 2, oy = (ov.height - sh * sc) / 2;
+  const P = quadN.map(p => [ox + p[0] * sw * sc, oy + p[1] * sh * sc]);
+  octx.lineWidth = 3 * dpr; octx.strokeStyle = color; octx.fillStyle = color;
+  octx.beginPath(); P.forEach((p, i) => i ? octx.lineTo(p[0], p[1]) : octx.moveTo(p[0], p[1])); octx.closePath(); octx.stroke();
+  for (const p of P) { octx.beginPath(); octx.arc(p[0], p[1], 6 * dpr, 0, Math.PI * 2); octx.fill(); }
+}
+
+function tick() {
+  if (!running) return;
+  if (!busy && video.readyState >= 2 && video.videoWidth) {
+    const sw = video.videoWidth, sh = video.videoHeight;
+    const r = analyse(video, sw, sh);
+    const now = performance.now();
+    hist.push({ t: now, sharp: r.sharp, quadN: r.quadN });
+    while (hist.length && now - hist[0].t > 2000) hist.shift();
+    evaluate(r, now, sw, sh);
+  }
+  if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(() => setTimeout(tick, 60));
+  else setTimeout(tick, 100);
+}
+
+function evaluate(r, now, sw, sh) {
+  const found = !!r.det;
+  const motion = quadMotion();
+  const stable = motion < 0.006;
+  const recentMax = Math.max(...hist.map(h => h.sharp), 1);
+  const rel = r.sharp / recentMax;
+  const sharpOK = r.sharp >= S.floor && rel >= S.rel;
+  const shakeOK = shake == null || shake <= S.shake;
+
+  setGauge("gDet", found ? (stable ? 1 : 0.6) : 0.1, found ? (stable ? "ok" : "wait") : "bad",
+    found ? (stable ? "固定" : "動いている") : "なし", "vDet");
+  setGauge("gSharp", Math.min(1, rel), sharpOK ? "ok" : (rel > 0.6 ? "wait" : "bad"),
+    r.sharp.toFixed(0), "vSharp");
+  if (shake == null) setGauge("gShake", 1, "wait", "センサーなし", "vShake");
+  else setGauge("gShake", 1 - Math.min(1, shake / (S.shake * 2)), shakeOK ? "ok" : (shake < S.shake * 1.6 ? "wait" : "bad"), shake.toFixed(0) + "°/s", "vShake");
+
+  const allOK = found && stable && sharpOK && shakeOK;
+  drawOverlay(r.quadN, allOK ? getCSS("--ok") : found ? getCSS("--wait") : getCSS("--accent"), sw, sh);
+
+  if (paused) { setStatus("ok", "撮影済み", "次の曲の採点画面で「次を撮る」を押してください"); return; }
+  if (!found) { goodSince = 0; setStatus("bad", "探しています", "採点画面がガイド枠に収まるように向けてください"); return; }
+  if (!stable || !shakeOK) { goodSince = 0; setStatus("wait", "止めてください", "スマホを動かさずに構えてください"); return; }
+  if (!sharpOK) { goodSince = 0; setStatus("wait", "ピント待ち", r.sharp < S.floor ? "暗いかピンぼけです。少し近づくか、画面をタップしてピントを合わせてください" : "ブレが収まるのを待っています"); return; }
+  if (!goodSince) goodSince = now;
+  const left = S.hold - (now - goodSince);
+  if (left > 0) { setStatus("ok", "そのまま…", `あと ${Math.ceil(left / 100) / 10} 秒`); return; }
+  if ($("auto").checked) { goodSince = 0; capture("auto"); }
+  else setStatus("ok", "撮影できます", "「今すぐ撮る」を押してください");
+}
+const cssCache = {};
+function getCSS(v) { return cssCache[v] || (cssCache[v] = getComputedStyle(document.documentElement).getPropertyValue(v).trim()); }
+
+/* ============================================================
+   capture: burst, keep the sharpest, re-detect at higher res, warp
+   ============================================================ */
+function grab() {
+  const c = document.createElement("canvas"); c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext("2d").drawImage(video, 0, 0); return c;
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function capture(kind, stillCanvas) {
+  if (busy) return; busy = true;
+  try {
+    setStatus("ok", "撮影中", "連写しています…");
+    $("flash").classList.add("on"); setTimeout(() => $("flash").classList.remove("on"), 60);
+    const frames = [];
+    if (stillCanvas) frames.push(stillCanvas);
+    else for (let k = 0; k < S.burst; k++) { frames.push(grab()); if (k < S.burst - 1) await sleep(70); }
+    let best = null;
+    for (const c of frames) {
+      const r = analyse(c, c.width, c.height);
+      if (!best || r.sharp > best.r.sharp) best = { c, r };
+    }
+    const c = best.c;
+    // re-detect on a bigger copy for more accurate corners
+    const big = document.createElement("canvas"); const BW = Math.min(1000, c.width);
+    big.width = BW; big.height = Math.round(c.height * BW / c.width);
+    const bctx = big.getContext("2d", { willReadFrequently: true }); bctx.drawImage(c, 0, 0, big.width, big.height);
+    const { val } = planes(bctx.getImageData(0, 0, big.width, big.height).data, big.width, big.height);
+    const det = detectScreen(val, big.width, big.height) || null;
+    let quadN = det ? det.quad.map(p => [p[0] / big.width, p[1] / big.height]) : best.r.quadN;
+    let warp = null;
+    if (quadN) {
+      const q = quadN.map(p => [p[0] * c.width, p[1] * c.height]);
+      warp = warpCanvas(c, q, 1600, 900);
+    }
+    // raw with the quad drawn on it (for checking)
+    const rawMarked = document.createElement("canvas"); rawMarked.width = c.width; rawMarked.height = c.height;
+    const rctx = rawMarked.getContext("2d"); rctx.drawImage(c, 0, 0);
+    if (quadN) {
+      rctx.lineWidth = Math.max(3, c.width / 300); rctx.strokeStyle = "#4fd18b";
+      rctx.beginPath(); quadN.forEach((p, i) => { const x = p[0] * c.width, y = p[1] * c.height; i ? rctx.lineTo(x, y) : rctx.moveTo(x, y); }); rctx.closePath(); rctx.stroke();
+    }
+    const toBlob = cv => new Promise(res => cv.toBlob(res, "image/jpeg", 0.92));
+    const shot = {
+      id: Date.now(), kind, time: new Date(),
+      sharp: best.r.sharp, burstSharp: frames.map(f => f === c ? best.r.sharp : null),
+      size: `${c.width}×${c.height}`, quadN,
+      raw: await toBlob(c), rawMarked: await toBlob(rawMarked), warp: warp ? await toBlob(warp) : null,
+      shake, det: det ? { rect: det.rect, area: det.area, thr: det.thr } : null,
+    };
+    shot.rawURL = URL.createObjectURL(shot.raw);
+    shot.rawMarkedURL = URL.createObjectURL(shot.rawMarked);
+    shot.warpURL = shot.warp ? URL.createObjectURL(shot.warp) : shot.rawMarkedURL;
+    shots.unshift(shot);
+    renderTray();
+    if (navigator.vibrate) try { navigator.vibrate(60); } catch (e) {}
+    if (!stillCanvas) { paused = true; $("btnResume").hidden = false; }
+    setStatus("ok", "撮影済み", warp ? "下のサムネイルをタップすると補正結果を確認できます" : "画面の四隅が取れなかったので元画像だけ保存しました");
+  } catch (err) {
+    console.error(err); setStatus("bad", "エラー", "撮影に失敗しました: " + err.message);
+  } finally { busy = false; }
+}
+
+function renderTray() {
+  const tray = $("tray"); tray.textContent = "";
+  for (const s of shots) {
+    const b = document.createElement("button"); b.className = "shot"; b.type = "button";
+    b.setAttribute("aria-label", "撮影結果を開く");
+    const im = document.createElement("img"); im.src = s.warpURL; im.alt = "";
+    const sp = document.createElement("span"); sp.textContent = s.time.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    b.append(im, sp); b.addEventListener("click", () => openSheet(s)); tray.append(b);
+  }
+}
+
+/* ============================================================
+   detail sheet
+   ============================================================ */
+let current = null;
+function fname(s, suffix) {
+  const t = s.time, p = n => String(n).padStart(2, "0");
+  return `score_${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}_${p(t.getHours())}${p(t.getMinutes())}${p(t.getSeconds())}_${suffix}.jpg`;
+}
+function download(blob, name) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+function openSheet(s) {
+  current = s;
+  $("shWarp").src = s.warpURL; $("shRaw").src = s.rawMarkedURL;
+  $("shSaveWarp").disabled = !s.warp;
+  $("shTitle").textContent = s.time.toLocaleString("ja-JP");
+  $("shMeta").textContent = [
+    `撮影: ${s.kind === "auto" ? "自動" : s.kind === "file" ? "写真から" : "手動"} / 元画像 ${s.size}`,
+    `くっきり度: ${s.sharp.toFixed(0)}`,
+    `手の揺れ: ${s.shake == null ? "センサーなし" : s.shake.toFixed(1) + "°/s"}`,
+    s.det ? `画面検出: 四角形らしさ ${(s.det.rect * 100).toFixed(1)}% / 面積 ${(s.det.area * 100).toFixed(1)}% / しきい値 ${s.det.thr}` : "画面検出: 失敗",
+    s.quadN ? "四隅(比率): " + s.quadN.map(p => `(${p[0].toFixed(3)}, ${p[1].toFixed(3)})`).join(" ") : "",
+  ].filter(Boolean).join("\n");
+  $("shMeta").style.whiteSpace = "pre-wrap";
+  const canShare = !!(navigator.canShare && s.warp && navigator.canShare({ files: [new File([s.warp], "x.jpg", { type: "image/jpeg" })] }));
+  $("shShare").hidden = !canShare;
+  $("sheet").hidden = false;
+}
+$("shClose").addEventListener("click", () => { $("sheet").hidden = true; });
+$("shSaveWarp").addEventListener("click", () => current && current.warp && download(current.warp, fname(current, "warped")));
+$("shSaveRaw").addEventListener("click", () => current && download(current.raw, fname(current, "raw")));
+$("shShare").addEventListener("click", async () => {
+  if (!current) return;
+  const files = [new File([current.warp], fname(current, "warped"), { type: "image/jpeg" }), new File([current.raw], fname(current, "raw"), { type: "image/jpeg" })];
+  try { await navigator.share({ files, title: "採点画面" }); } catch (e) { /* user cancelled */ }
+});
+$("shDelete").addEventListener("click", () => {
+  if (!current) return;
+  const i = shots.indexOf(current); if (i >= 0) shots.splice(i, 1);
+  [current.rawURL, current.rawMarkedURL, current.warpURL].forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
+  current = null; $("sheet").hidden = true; renderTray();
+});
+
+/* ============================================================
+   camera start / controls
+   ============================================================ */
+async function startCamera() {
+  if (!window.isSecureContext) { setStatus("bad", "使えません", "カメラは https か localhost で開いたときだけ使えます"); return; }
+  try {
+    // iOS: motion sensors need permission from a tap
+    if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+      try { await DeviceMotionEvent.requestPermission(); } catch (e) {}
+    }
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 3840 }, height: { ideal: 2160 } },
+    });
+  } catch (e) {
+    setStatus("bad", "カメラなし", "カメラを使えませんでした（" + e.name + "）。ブラウザの設定でカメラを許可してください");
+    return;
+  }
+  track = stream.getVideoTracks()[0];
+  video.srcObject = stream; await video.play().catch(() => {});
+  $("still").hidden = true; $("empty").hidden = true; $("guide").hidden = false; $("btnShoot").disabled = false;
+  try { if ("wakeLock" in navigator) await navigator.wakeLock.request("screen"); } catch (e) {}
+  setupTrackControls();
+  running = true; paused = false; tick();
+}
+
+function setupTrackControls() {
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  const set = track.getSettings ? track.getSettings() : {};
+  try { if (caps.focusMode && caps.focusMode.includes("continuous")) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch (e) {}
+  const range = (lid, sid, oid, key, fmt) => {
+    if (!caps[key] || caps[key].min == null) return;
+    const el = $(sid); $(lid).hidden = false;
+    el.min = caps[key].min; el.max = caps[key].max; el.step = caps[key].step || 0.1; el.value = set[key] ?? caps[key].min;
+    $(oid).textContent = fmt(+el.value);
+    el.addEventListener("input", () => { $(oid).textContent = fmt(+el.value); track.applyConstraints({ advanced: [{ [key]: +el.value }] }).catch(() => {}); });
+  };
+  range("lZoom", "sZoom", "oZoom", "zoom", v => v.toFixed(1) + "×");
+  range("lExp", "sExp", "oExp", "exposureCompensation", v => (v > 0 ? "+" : "") + v.toFixed(1));
+  $("camInfo").textContent = `カメラ: ${set.width || "?"}×${set.height || "?"}` +
+    (caps.zoom ? "" : " / ズーム調整なし") + (caps.exposureCompensation ? "" : " / 露出補正なし（iPhoneのSafariでは使えません）");
+}
+
+$("btnStart").addEventListener("click", startCamera);
+$("btnShoot").addEventListener("click", () => { paused = false; $("btnResume").hidden = true; capture("manual"); });
+$("btnResume").addEventListener("click", () => { paused = false; goodSince = 0; hist.length = 0; $("btnResume").hidden = true; });
+$("view").addEventListener("click", e => {
+  // tap-to-focus where supported (Android Chrome)
+  if (!track || !track.getCapabilities) return;
+  const caps = track.getCapabilities();
+  if (!caps.pointsOfInterest) return;
+  const r = video.getBoundingClientRect();
+  track.applyConstraints({ advanced: [{ pointsOfInterest: [{ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }], focusMode: "single-shot" }] }).catch(() => {});
+});
+
+/* still photo mode: run the same detection + warp on an existing picture */
+$("btnFile").addEventListener("click", () => $("file").click());
+$("file").addEventListener("change", async () => {
+  const f = $("file").files[0]; if (!f) return;
+  const url = URL.createObjectURL(f), im = $("still");
+  im.src = url; await im.decode().catch(() => {});
+  im.hidden = false; $("empty").hidden = true;
+  const c = document.createElement("canvas"); c.width = im.naturalWidth; c.height = im.naturalHeight;
+  c.getContext("2d").drawImage(im, 0, 0);
+  const r = analyse(c, c.width, c.height);
+  hist.length = 0; hist.push({ t: performance.now(), sharp: r.sharp, quadN: r.quadN });
+  setGauge("gDet", r.det ? 1 : 0.1, r.det ? "ok" : "bad", r.det ? "検出" : "なし", "vDet");
+  setGauge("gSharp", Math.min(1, r.sharp / 3000), r.sharp >= S.floor ? "ok" : "bad", r.sharp.toFixed(0), "vSharp");
+  setGauge("gShake", 0, "wait", "写真", "vShake");
+  drawOverlay(r.quadN, r.det ? getCSS("--ok") : getCSS("--bad"), c.width, c.height);
+  await capture("file", c);
+  $("file").value = "";
+});
+window.addEventListener("resize", () => { if (!running) octx.clearRect(0, 0, ov.width, ov.height); });
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible" && running) { try { if ("wakeLock" in navigator) await navigator.wakeLock.request("screen"); } catch (e) {} }
+});
+</script>
+</body>
+</html>
