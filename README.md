@@ -6,6 +6,8 @@
 - `index.html` … スマホで採点画面を自動撮影するページ（GitHub Pages で公開）
 - `poc/ocr/` … 撮った写真から点数などを読み取る OCR の試作（Python）
 - `poc/collect/` … ネットから採点画面の画像を集めるための道具
+- `poc/classify/` … 画像だけで機種・採点モードを見分ける試作
+- [`ROADMAP.md`](ROADMAP.md) … これからの方針
 
 公開ページ: https://screana.github.io/score-capture_poc/
 （Settings → Pages で `main` / `/(root)` を有効にしたとき）

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-プロジェクトの全体像と現状は README.md を参照。
+プロジェクトの全体像と現状は README.md、これからの方針は ROADMAP.md を参照。
 
 ## ルール
 - git のコミットに Claude を co-author（`Co-Authored-By:`）として入れない。セッションへのリンクなどの署名行も入れない
